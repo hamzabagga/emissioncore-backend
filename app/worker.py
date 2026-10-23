@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.db.session import SessionLocal
 from app.models import Job
 from app.services.imports import mark_job_failed, process_import_job
+from app.services.recalculation import process_recalculation_job
 
 logger = logging.getLogger("worker")
 
@@ -23,6 +24,7 @@ STALE_AFTER = timedelta(minutes=10)
 
 HANDLERS = {
     "import": process_import_job,
+    "recalculation": process_recalculation_job,
 }
 
 
