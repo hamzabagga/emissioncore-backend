@@ -24,3 +24,15 @@ services:
     depends_on:
       db:
         condition: service_healthy
+  worker:
+    build: .
+    command: python -m app.worker
+    volumes:
+      - .:/code
+    environment:
+      DATABASE_URL: postgresql+psycopg://emission:emission@db:5432/emission
+    depends_on:
+      db:
+        condition: service_healthy
+      api:
+        condition: service_started

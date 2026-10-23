@@ -25,7 +25,7 @@ from app.main import app  # noqa: E402
 from app.models import Organization, User  # noqa: E402
 
 TEST_PASSWORD = "password123"
-TABLES = "emission_records, emission_factors, companies, users, organizations"
+TABLES = "emission_records, jobs, emission_factors, companies, users, organizations"
 
 
 def _create_test_database_if_missing() -> None:

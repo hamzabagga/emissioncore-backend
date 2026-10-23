@@ -1,7 +1,16 @@
 from datetime import date as date_type
 from decimal import Decimal
 
-from sqlalchemy import CheckConstraint, Date, ForeignKeyConstraint, Index, Numeric, String
+from sqlalchemy import (
+    CheckConstraint,
+    Date,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Index,
+    Numeric,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TimestampMixin
@@ -32,6 +41,9 @@ class EmissionRecord(TimestampMixin, Base):
         Index("ix_records_org_company_date", "organization_id", "company_id", "date"),
         # Recalcul : retrouver vite les records d'un facteur
         Index("ix_records_factor", "factor_id"),
+        # Idempotence de l'import : une ligne d'un fichier = au plus un record,
+        # même si le job est relancé après un crash
+        UniqueConstraint("import_job_id", "import_row", name="uq_records_import_row"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -43,3 +55,8 @@ class EmissionRecord(TimestampMixin, Base):
     date: Mapped[date_type] = mapped_column(Date)
     kg_co2e: Mapped[Decimal] = mapped_column(Numeric(20, 6))
     factor_id: Mapped[int] = mapped_column()
+    # Renseignés uniquement pour les records créés par un import CSV
+    import_job_id: Mapped[int | None] = mapped_column(
+        ForeignKey("jobs.id", ondelete="SET NULL"), nullable=True
+    )
+    import_row: Mapped[int | None] = mapped_column(nullable=True)
