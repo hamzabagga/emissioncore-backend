@@ -15,3 +15,16 @@ def get_company_or_404(db: Session, company_id: int, organization_id: int) -> Co
     if company is None:
         raise not_found("Company")
     return company
+
+from app.models import EmissionFactor
+
+
+def get_factor_or_404(db: Session, factor_id: int, organization_id: int) -> EmissionFactor:
+    factor = db.scalar(
+        select(EmissionFactor).where(
+            EmissionFactor.id == factor_id, EmissionFactor.organization_id == organization_id
+        )
+    )
+    if factor is None:
+        raise not_found("Emission factor")
+    return factor

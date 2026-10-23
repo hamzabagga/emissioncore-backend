@@ -13,3 +13,5 @@ app.include_router(companies.router)
 @app.get("/health")
 def health():
     return {"status": "ok"}
+from app.api.routes import auth, companies, factors
+app.include_router(factors.router)

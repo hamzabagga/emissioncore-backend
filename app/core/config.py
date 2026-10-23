@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://emission:emission@localhost:5432/emission"
 
     # En production, JWT_SECRET doit venir d'une variable d'environnement secrète
-    jwt_secret: str = "dev-secret-change-me"
+    jwt_secret: str = "dev-only-secret-change-me-in-production-0123456789"
     jwt_algorithm: str = "HS256"
     access_token_minutes: int = 15
     refresh_token_days: int = 7
