@@ -11,6 +11,7 @@ from app.core.errors import AppError, conflict
 from app.models import EmissionFactor
 from app.schemas.common import Page
 from app.schemas.factor import FactorCreate, FactorOut, FactorUpdate, Source
+from app.services.audit import FACTOR_FIELDS, log_change, snapshot
 from app.services.factors import ensure_no_overlap
 
 router = APIRouter(prefix="/emission-factors", tags=["emission factors"])
@@ -56,6 +57,13 @@ def create_factor(body: FactorCreate, user: AdminUser, db: DbSession):
     )
     factor = EmissionFactor(organization_id=user.organization_id, **body.model_dump())
     db.add(factor)
+    try:
+        db.flush()  # obtient factor.id ; la contrainte d'exclusion peut déjà refuser ici
+    except IntegrityError:
+        db.rollback()
+        raise conflict("Factor period overlaps an existing factor") from None
+    log_change(db, user, "emission_factor", factor.id, "create",
+               after=snapshot(factor, FACTOR_FIELDS))
     _commit_or_conflict(db, "Factor period overlaps an existing factor")
     db.refresh(factor)
     return factor
@@ -69,6 +77,7 @@ def get_factor(factor_id: int, user: ReadUser, db: DbSession):
 @router.patch("/{factor_id}", response_model=FactorOut)
 def update_factor(factor_id: int, body: FactorUpdate, user: AdminUser, db: DbSession):
     factor = get_factor_or_404(db, factor_id, user.organization_id)
+    before = snapshot(factor, FACTOR_FIELDS)
     changes = body.model_dump(exclude_unset=True)
 
     new_from = changes.get("valid_from", factor.valid_from)
@@ -82,6 +91,8 @@ def update_factor(factor_id: int, body: FactorUpdate, user: AdminUser, db: DbSes
 
     for field, value in changes.items():
         setattr(factor, field, value)
+    log_change(db, user, "emission_factor", factor.id, "update",
+               before=before, after=snapshot(factor, FACTOR_FIELDS))
     _commit_or_conflict(db, "Factor period overlaps an existing factor")
     db.refresh(factor)
     return factor
@@ -90,6 +101,8 @@ def update_factor(factor_id: int, body: FactorUpdate, user: AdminUser, db: DbSes
 @router.delete("/{factor_id}", status_code=204)
 def delete_factor(factor_id: int, user: AdminUser, db: DbSession):
     factor = get_factor_or_404(db, factor_id, user.organization_id)
+    log_change(db, user, "emission_factor", factor.id, "delete",
+               before=snapshot(factor, FACTOR_FIELDS))
     db.delete(factor)
     # FK RESTRICT : impossible de supprimer un facteur utilisé par des records
     _commit_or_conflict(db, "Factor is used by emission records and cannot be deleted")

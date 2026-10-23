@@ -11,6 +11,7 @@ from app.models import EmissionRecord
 from app.schemas.common import Page
 from app.schemas.factor import Source
 from app.schemas.record import RecordCreate, RecordOut, RecordUpdate
+from app.services.audit import RECORD_FIELDS, log_change, snapshot
 from app.services.records import calculate_emissions
 
 router = APIRouter(prefix="/records", tags=["emission records"])
@@ -64,6 +65,9 @@ def create_record(body: RecordCreate, user: WriteUser, db: DbSession):
         factor_id=factor.id,
     )
     db.add(record)
+    db.flush()  # obtient record.id avant d'écrire l'audit
+    log_change(db, user, "emission_record", record.id, "create",
+               after=snapshot(record, RECORD_FIELDS))
     db.commit()
     db.refresh(record)
     return record
@@ -77,6 +81,7 @@ def get_record(record_id: int, user: ReadUser, db: DbSession):
 @router.patch("/{record_id}", response_model=RecordOut)
 def update_record(record_id: int, body: RecordUpdate, user: WriteUser, db: DbSession):
     record = get_record_or_404(db, record_id, user.organization_id)
+    before = snapshot(record, RECORD_FIELDS)
     for field, value in body.model_dump(exclude_unset=True, exclude_none=True).items():
         setattr(record, field, value)
     # Toute modification peut changer le facteur applicable -> on recalcule toujours
@@ -85,6 +90,8 @@ def update_record(record_id: int, body: RecordUpdate, user: WriteUser, db: DbSes
     )
     record.factor_id = factor.id
     record.kg_co2e = kg_co2e
+    log_change(db, user, "emission_record", record.id, "update",
+               before=before, after=snapshot(record, RECORD_FIELDS))
     db.commit()
     db.refresh(record)
     return record
@@ -93,6 +100,8 @@ def update_record(record_id: int, body: RecordUpdate, user: WriteUser, db: DbSes
 @router.delete("/{record_id}", status_code=204)
 def delete_record(record_id: int, user: WriteUser, db: DbSession):
     record = get_record_or_404(db, record_id, user.organization_id)
+    log_change(db, user, "emission_record", record.id, "delete",
+               before=snapshot(record, RECORD_FIELDS))
     db.delete(record)
     db.commit()
     return Response(status_code=204)
