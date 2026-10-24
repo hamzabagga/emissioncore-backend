@@ -325,27 +325,26 @@ and from which value, is essential.
 
 ## 9. Time spent
 
-Test received at 11:05; times below are taken from my commit history (breaks excluded).
+Approximate active time per part (breaks excluded).
 
-| Part | Approx. time | Commits |
-|------|--------------|---------|
-| Reading the brief, planning the architecture | ~15 min | — |
-| Setup: FastAPI, Docker Compose, PostgreSQL, first commit | ~1 h 15 | 12:34 |
-| Data model + first migration (composite FKs, exclusion constraint, indexes) | ~1 h 15 | 13:57 |
-| Authentication (JWT login/refresh), roles, error format | ~1 h 30 | 15:29 |
-| Auth tests + test setup (incl. fixing an incomplete first test commit) | ~45 min | 15:37, 17:57 |
-| CRUD companies / factors / records, cursor pagination, tests | ~1 h 15 | 17:28 → 18:25 |
-| User management (admin) | ~20 min | 18:48 |
-| Summary endpoint + edge-case tests | ~15 min | 19:03 |
-| CSV import, job queue, worker, end-to-end check in Docker | ~30 min | 21:32 |
-| Recalculation + audit log | ~45 min | 22:29, 22:30 |
-| README + final verification (clean clone, `docker compose up`, tests) | ~1 h | next morning |
-| **Total active work** | **~9 h** | |
+| Part | Approx. time |
+|------|--------------|
+| Reading the brief, planning the architecture | ~30 min |
+| Setup: FastAPI, Docker Compose, PostgreSQL | ~1 h |
+| Data model + first migration (composite FKs, exclusion constraint, indexes) | ~1 h 15 |
+| Authentication (JWT login/refresh), roles, error format | ~1 h 30 |
+| Auth tests + test setup | ~45 min |
+| CRUD companies / factors / records, cursor pagination, tests | ~1 h 15 |
+| User management (admin) | ~30 min |
+| Summary endpoint + edge-case tests | ~20 min |
+| CSV import, job queue, worker | ~30 min |
+| Recalculation + audit log | ~1 h 10 |
+| README + final verification (clean clone, `docker compose up`, tests) | ~2 h |
+| **Total active work** | **~11 h** |
 
 The later parts went much faster than the first ones: the structure (scoping helpers, pagination,
 error format, test fixtures) was in place and reused, and AI assistance generated most of the code
 (see below). Most of my time went into running, debugging, verifying and understanding.
-
 ---
 
 ## 10. AI Assistance
@@ -360,14 +359,14 @@ The brief allows AI assistance, which I used as a development support tool throu
 - Helped draft and refine parts of the implementation, including emission records and calculations, CSV imports, recalculation and audit logging. I integrated these changes into my project, reviewed them, ran the tests and committed the results myself.
 - Assisted with drafting this README, which I subsequently reviewed and adapted.
 
-**Claude Code** (CLI in my terminal) — used occasionally to assist with authentication tests and test configuration. I reviewed the generated changes and adjusted the configuration to ensure the tests run against the actual Alembic migrations.
 
+**Claude Code** (CLI in my terminal) — used occasionally to assist with authentication tests. I reviewed the generated changes.
 **What I did myself:**
 
 - Set up and managed the development environment, including Docker Desktop, Docker Compose, PostgreSQL, Alembic, the Python virtual environment and the GitHub repository.
 - Coordinated the implementation, integrated the proposed code into the project, checked file placement and configuration, and ran the application and tests throughout development.
 - Investigated and resolved the issues encountered, including Docker and database startup problems, incorrect file locations, unsaved editor changes, syntax errors, outdated configuration, HTTP 500 responses and stale test database state.
-- Tested the API manually through Swagger, including login, protected routes and invalid credentials returning HTTP 401. I also verified the CSV import workflow end to end against the running Docker environment.
+- Tested the API manually through Swagger, including login, protected routes and invalid credentials returning HTTP 401.  
 - Made the implementation and delivery decisions, organized the work into focused commits, checked that tests passed before committing, and prioritized implementing selected advanced requirements thoroughly rather than covering more requirements incompletely.
 - Reviewed the final code and documentation to ensure I could explain the implementation and the reasoning behind the main design decisions.
 
