@@ -1,0 +1,12 @@
+source,unit,activity_amount,date
+electricity,kWh,12500,2024-01-31
+electricity,kWh,11800,2024-02-29
+electricity,kWh,13200,2024-12-31
+electricity,kWh,12900,2025-01-31
+fuel,litre,850,2024-03-15
+fuel,litre,920,2025-03-15
+travel,km,4300,2024-06-10
+travel,km,5100,2025-06-10
+gas,kWh,300,2024-05-01
+electricity,kWh,abc,2024-05-01
+electricity,kWh,1000,2023-06-01
