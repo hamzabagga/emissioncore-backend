@@ -58,9 +58,10 @@ def run_once(db: Session) -> bool:
     logger.info("processing job %s (%s)", job.id, job.type)
     try:
         HANDLERS[job.type](db, job)
-    except Exception as exc:  # un job en erreur ne doit pas arrêter le worker
+    except Exception:  # un job en erreur ne doit pas arrêter le worker
+        # Le détail (SQL, valeurs) va dans les logs, jamais dans la réponse de l'API
         logger.exception("job %s failed", job.id)
-        mark_job_failed(db, job.id, str(exc))
+        mark_job_failed(db, job.id, "Internal error while processing the job")
     return True
 
 

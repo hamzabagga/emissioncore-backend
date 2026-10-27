@@ -19,6 +19,10 @@ MAX_REPORTED_ERRORS = 1_000  # le rapport reste lisible même si tout le fichier
 REQUIRED_COLUMNS = ("source", "unit", "activity_amount", "date")
 SOURCES = {"electricity", "fuel", "travel", "other"}
 KG_PRECISION = Decimal("0.000001")
+# Limites des colonnes Numeric(18, 6) et Numeric(20, 6) : au-delà, Postgres
+# refuse l'INSERT et c'est tout le lot (donc le job) qui échoue.
+MAX_AMOUNT = Decimal("1e12")
+MAX_KG = Decimal("1e14")
 
 
 # ---------------------------------------------------------------- côté API
@@ -121,6 +125,12 @@ def _parse_row(row: dict, factors: _FactorLookup) -> tuple[dict | None, str | No
         return None, f"invalid activity_amount '{raw_amount}'"
     if not amount.is_finite() or amount < 0:
         return None, "activity_amount must be a number >= 0"
+    if amount >= MAX_AMOUNT:
+        return None, f"activity_amount must be < {MAX_AMOUNT:f}"
+    # arrondi à 6 décimales comme Postgres (sûr ici : amount < 1e12)
+    amount = amount.quantize(KG_PRECISION, rounding=ROUND_HALF_UP)
+    if amount >= MAX_AMOUNT:  # ex. 999999999999.9999999 arrondi -> 1e12
+        return None, f"activity_amount must be < {MAX_AMOUNT:f}"
     try:
         on_date = date.fromisoformat(raw_date)
     except ValueError:
@@ -130,7 +140,12 @@ def _parse_row(row: dict, factors: _FactorLookup) -> tuple[dict | None, str | No
     if factor is None:
         return None, f"no emission factor valid on {on_date} for {source}/{unit}"
 
-    kg = (amount * factor.kg_co2e_per_unit).quantize(KG_PRECISION, rounding=ROUND_HALF_UP)
+    kg = amount * factor.kg_co2e_per_unit
+    if kg >= MAX_KG:  # vérifié avant quantize, qui lèverait InvalidOperation
+        return None, "computed kg_co2e is too large"
+    kg = kg.quantize(KG_PRECISION, rounding=ROUND_HALF_UP)
+    if kg >= MAX_KG:  # l'arrondi peut atteindre la limite
+        return None, "computed kg_co2e is too large"
     return {
         "source": source,
         "unit": unit,

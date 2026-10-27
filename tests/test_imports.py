@@ -192,3 +192,31 @@ def test_viewer_cannot_import(client, auth_headers, company):
     viewer = auth_headers("viewer@a.io", role="viewer")
     response = upload(client, viewer, company["id"], HEADER + "electricity,kWh,1,2024-06-01\n")
     assert response.status_code == 403
+
+
+def test_too_large_amount_is_a_row_error_not_a_failed_import(client, admin_a, company):
+    # avant la correction : 1e20 dépasse la colonne Numeric -> tout l'import passe en "failed"
+    csv_text = HEADER + "electricity,kWh,100,2024-03-01\nelectricity,kWh,1e20,2024-03-01\n"
+    job = upload(client, admin_a, company["id"], csv_text).json()
+    run_worker_until_idle()
+    job = client.get(f"/imports/{job['id']}", headers=admin_a).json()
+
+    assert job["status"] == "completed"
+    assert (job["success_rows"], job["error_rows"]) == (1, 1)
+    assert [e["row"] for e in job["errors"]] == [3]
+    assert count_records() == 1
+
+
+
+@pytest.mark.parametrize("amount", ["1e25", "999999999999.9999999"])
+def test_extreme_amounts_are_row_errors(client, admin_a, company, amount):
+    # 1e25 : trop grand pour Decimal.quantize ; 999999999999.9999999 : arrondi
+    # à 6 décimales, il atteint 10^12 et dépasserait la colonne Numeric(18, 6)
+    csv_text = HEADER + f"electricity,kWh,100,2024-03-01\nelectricity,kWh,{amount},2024-03-01\n"
+    job = upload(client, admin_a, company["id"], csv_text).json()
+    run_worker_until_idle()
+    job = client.get(f"/imports/{job['id']}", headers=admin_a).json()
+
+    assert job["status"] == "completed"
+    assert (job["success_rows"], job["error_rows"]) == (1, 1)
+    assert [e["row"] for e in job["errors"]] == [3]
