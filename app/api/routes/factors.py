@@ -13,6 +13,7 @@ from app.schemas.common import Page
 from app.schemas.factor import FactorCreate, FactorOut, FactorUpdate, Source
 from app.services.audit import FACTOR_FIELDS, log_change, snapshot
 from app.services.factors import ensure_no_overlap
+from app.services.recalculation import enqueue_recalculation
 
 router = APIRouter(prefix="/emission-factors", tags=["emission factors"])
 
@@ -65,11 +66,16 @@ def create_factor(body: FactorCreate, user: AdminUser, db: DbSession):
     db.add(factor)
     try:
         db.flush()  # obtient factor.id ; la contrainte d'exclusion peut déjà refuser ici
-    except IntegrityError:
+    except IntegrityError as exc:
         db.rollback()
-        raise conflict("Factor period overlaps an existing factor") from None
+        if getattr(exc.orig, "sqlstate", None) == EXCLUSION_VIOLATION:
+            raise conflict("Factor period overlaps an existing factor") from None
+        raise
     log_change(db, user, "emission_factor", factor.id, "create",
                after=snapshot(factor, FACTOR_FIELDS))
+    # Le nouveau facteur peut s'appliquer à des records existants : recalcul en tâche de fond,
+    # mis en file dans la même transaction (pas de facteur modifié sans recalcul prévu)
+    enqueue_recalculation(db, user.organization_id, user.id)
     _commit_or_conflict(db, "Factor period overlaps an existing factor")
     db.refresh(factor)
     return factor
@@ -97,8 +103,11 @@ def update_factor(factor_id: int, body: FactorUpdate, user: AdminUser, db: DbSes
 
     for field, value in changes.items():
         setattr(factor, field, value)
-    log_change(db, user, "emission_factor", factor.id, "update",
-               before=before, after=snapshot(factor, FACTOR_FIELDS))
+    after = snapshot(factor, FACTOR_FIELDS)
+    log_change(db, user, "emission_factor", factor.id, "update", before=before, after=after)
+    if after != before:
+        # Les records rattachés à ce facteur doivent refléter sa nouvelle valeur / période
+        enqueue_recalculation(db, user.organization_id, user.id)
     _commit_or_conflict(db, "Factor period overlaps an existing factor")
     db.refresh(factor)
     return factor

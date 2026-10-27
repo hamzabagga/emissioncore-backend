@@ -4,13 +4,29 @@ from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import AdminUser, DbSession
 from app.api.pagination import paginate
-from app.core.errors import AppError, conflict, not_found
+from app.core.errors import AppError, conflict, forbidden, not_found
 from app.core.security import hash_password
 from app.models import User
 from app.schemas.common import Page
 from app.schemas.user import Role, UserAdminOut, UserCreate, UserUpdate
 
 router = APIRouter(prefix="/users", tags=["users"])
+
+
+def _lock_admins_and_check_still_admin(db: DbSession, admin: User) -> None:
+    """Verrouille les admins de l'organisation pendant la transaction.
+
+    Sans ce verrou, deux admins qui se rétrogradent (ou se suppriment) l'un l'autre en
+    même temps laisseraient l'organisation sans aucun admin. Le 2e attend le 1er, puis
+    constate qu'il n'est plus admin.
+    """
+    admin_ids = db.scalars(
+        select(User.id)
+        .where(User.organization_id == admin.organization_id, User.role == "admin")
+        .with_for_update()
+    ).all()
+    if admin.id not in admin_ids:
+        raise forbidden()
 
 
 def _get_user_or_404(db: DbSession, user_id: int, organization_id: int) -> User:
@@ -66,6 +82,8 @@ def update_user(user_id: int, body: UserUpdate, admin: AdminUser, db: DbSession)
     if user.id == admin.id and body.role is not None and body.role != "admin":
         # sinon l'organisation peut se retrouver sans aucun admin
         raise AppError(409, "conflict", "You cannot remove your own admin role")
+    if user.role == "admin" and body.role is not None and body.role != "admin":
+        _lock_admins_and_check_still_admin(db, admin)
     if body.role is not None:
         user.role = body.role
     if body.password is not None:
@@ -80,6 +98,8 @@ def delete_user(user_id: int, admin: AdminUser, db: DbSession):
     user = _get_user_or_404(db, user_id, admin.organization_id)
     if user.id == admin.id:
         raise AppError(409, "conflict", "You cannot delete your own account")
+    if user.role == "admin":
+        _lock_admins_and_check_still_admin(db, admin)
     db.delete(user)
     db.commit()
     return Response(status_code=204)

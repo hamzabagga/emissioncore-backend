@@ -1,6 +1,7 @@
 from datetime import date
 from decimal import Decimal
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.models import AuditLog, User
@@ -55,4 +56,32 @@ def log_change(
             action=action,
             changes=changes,
         )
+    )
+
+
+# Une entrée "delete" par record de la company, en une seule requête (même format que
+# snapshot() : trim_scale donne "0.4" comme Decimal.normalize, une date donne "YYYY-MM-DD").
+_LOG_COMPANY_RECORDS_DELETE_SQL = text("""
+    INSERT INTO audit_logs (organization_id, user_id, entity, entity_id, action, changes)
+    SELECT r.organization_id, :user_id, 'emission_record', r.id, 'delete',
+           jsonb_build_object(
+               'company_id', r.company_id,
+               'source', r.source,
+               'unit', r.unit,
+               'activity_amount', trim_scale(r.activity_amount)::text,
+               'date', r.date::text,
+               'kg_co2e', trim_scale(r.kg_co2e)::text,
+               'factor_id', r.factor_id
+           )
+    FROM emission_records AS r
+    WHERE r.organization_id = :org_id AND r.company_id = :company_id
+""")
+
+
+def log_company_records_delete(db: Session, user: User, company_id: int) -> None:
+    """Supprimer une company supprime ses records (ON DELETE CASCADE) : on les trace
+    dans la même transaction, sinon des records disparaîtraient sans audit."""
+    db.execute(
+        _LOG_COMPANY_RECORDS_DELETE_SQL,
+        {"user_id": user.id, "org_id": user.organization_id, "company_id": company_id},
     )
