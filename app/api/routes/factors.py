@@ -16,16 +16,22 @@ from app.services.factors import ensure_no_overlap
 
 router = APIRouter(prefix="/emission-factors", tags=["emission factors"])
 
+EXCLUSION_VIOLATION = "23P01"
+FOREIGN_KEY_VIOLATION = "23503"
+
 SORT_COLUMNS = {"id": EmissionFactor.id, "valid_from": EmissionFactor.valid_from}
 
 
-def _commit_or_conflict(db: DbSession, message: str) -> None:
+def _commit_or_conflict(db: DbSession, message: str, sqlstate: str = EXCLUSION_VIOLATION) -> None:
     try:
         db.commit()
-    except IntegrityError:
-        # ex. contrainte d'exclusion déclenchée par une requête concurrente
+    except IntegrityError as exc:
         db.rollback()
-        raise conflict(message) from None
+        # Seule la violation attendue (ex. exclusion 23P01 lors d'une requête
+        # concurrente) devient un 409 ; toute autre erreur DB ne doit pas être masquée.
+        if getattr(exc.orig, "sqlstate", None) == sqlstate:
+            raise conflict(message) from None
+        raise
 
 
 @router.get("", response_model=Page[FactorOut])
@@ -105,5 +111,7 @@ def delete_factor(factor_id: int, user: AdminUser, db: DbSession):
                before=snapshot(factor, FACTOR_FIELDS))
     db.delete(factor)
     # FK RESTRICT : impossible de supprimer un facteur utilisé par des records
-    _commit_or_conflict(db, "Factor is used by emission records and cannot be deleted")
+    _commit_or_conflict(
+        db, "Factor is used by emission records and cannot be deleted", FOREIGN_KEY_VIOLATION
+    )
     return Response(status_code=204)
