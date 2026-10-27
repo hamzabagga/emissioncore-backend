@@ -71,7 +71,7 @@ docker compose up -d db
 python -m pytest -q
 ```
 
-**115 tests.** They run against a real PostgreSQL database (`emission_test`, created automatically)
+**120 tests.** They run against a real PostgreSQL database (`emission_test`, created automatically)
 on which the **real Alembic migrations** are applied, so database constraints (exclusion constraint,
 composite foreign keys, unique constraints) are tested too — not a mocked or `create_all` schema.
 Tables are truncated before each test, so tests are independent.
@@ -371,3 +371,7 @@ The brief allows AI assistance, which I used as a development support tool throu
 - Reviewed the final code and documentation to ensure I could explain the implementation and the reasoning behind the main design decisions.
 
 **My approach was to use AI as a development assistant while remaining responsible for integration, debugging, testing, technical decisions and the final result.** I reviewed the implementation so that I can explain the design choices and trade-offs during the follow-up discussion.
+
+### Post-submission self-review
+
+After submission, I reviewed my API on edge cases (extreme values, null fields, malformed CSV rows) and fixed 3 bugs on the branch `fix/self-review-bugs`, one commit per root cause. I used Claude to help reproduce the bugs and review my fixes. For each bug, I first wrote a regression test that failed on the original code, then fixed it and checked that the full suite passes.
