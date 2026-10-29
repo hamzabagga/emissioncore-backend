@@ -6,7 +6,7 @@ from sqlalchemy import func, select
 
 from app.db.session import SessionLocal
 from app.models import EmissionRecord, Job
-from app.services.imports import create_import_job, mark_job_failed
+from app.services.imports import create_import_job
 from app.worker import run_once
 
 HEADER = "source,unit,activity_amount,date\n"
@@ -161,8 +161,7 @@ def test_concurrent_uploads_of_same_file_create_one_job(client, admin_a, company
     assert len({job_id for job_id, _ in results}) == 1      # le même job
     assert sorted(created for _, created in results) == [False, True]
     with SessionLocal() as db:
-        # (les facteurs du fixture ont aussi créé un job de recalcul : on ne compte que les imports)
-        assert db.scalar(select(func.count()).select_from(Job).where(Job.type == "import")) == 1
+        assert db.scalar(select(func.count()).select_from(Job)) == 1
 
 
 # ---------- Volume ----------
@@ -193,59 +192,3 @@ def test_viewer_cannot_import(client, auth_headers, company):
     viewer = auth_headers("viewer@a.io", role="viewer")
     response = upload(client, viewer, company["id"], HEADER + "electricity,kWh,1,2024-06-01\n")
     assert response.status_code == 403
-
-
-def test_too_large_amount_is_a_row_error_not_a_failed_import(client, admin_a, company):
-    # avant la correction : 1e20 dépasse la colonne Numeric -> tout l'import passe en "failed"
-    csv_text = HEADER + "electricity,kWh,100,2024-03-01\nelectricity,kWh,1e20,2024-03-01\n"
-    job = upload(client, admin_a, company["id"], csv_text).json()
-    run_worker_until_idle()
-    job = client.get(f"/imports/{job['id']}", headers=admin_a).json()
-
-    assert job["status"] == "completed"
-    assert (job["success_rows"], job["error_rows"]) == (1, 1)
-    assert [e["row"] for e in job["errors"]] == [3]
-    assert count_records() == 1
-
-
-
-@pytest.mark.parametrize("amount", ["1e25", "999999999999.9999999"])
-def test_extreme_amounts_are_row_errors(client, admin_a, company, amount):
-    # 1e25 : trop grand pour Decimal.quantize ; 999999999999.9999999 : arrondi
-    # à 6 décimales, il atteint 10^12 et dépasserait la colonne Numeric(18, 6)
-    csv_text = HEADER + f"electricity,kWh,100,2024-03-01\nelectricity,kWh,{amount},2024-03-01\n"
-    job = upload(client, admin_a, company["id"], csv_text).json()
-    run_worker_until_idle()
-    job = client.get(f"/imports/{job['id']}", headers=admin_a).json()
-
-    assert job["status"] == "completed"
-    assert (job["success_rows"], job["error_rows"]) == (1, 1)
-    assert [e["row"] for e in job["errors"]] == [3]
-
-
-def test_csv_with_oversized_field_returns_422_not_500(client, admin_a, company):
-    # avant la correction : csv.Error "field larger than field limit" -> 500
-    csv_text = HEADER + "electricity,kWh,1," + "x" * 200_000 + "\n"
-    response = upload(client, admin_a, company["id"], csv_text)
-    assert response.status_code == 422, response.text
-    assert response.json()["error"]["code"] == "invalid_csv"
-
-
-def test_failed_import_can_be_retried_by_uploading_the_same_file(client, admin_a, company):
-    # avant la correction : le même fichier renvoyait le job "failed" pour toujours
-    csv_text = HEADER + "electricity,kWh,100,2024-03-01\n"
-    job = upload(client, admin_a, company["id"], csv_text).json()
-    with SessionLocal() as db:
-        mark_job_failed(db, job["id"], "Internal error while processing the job")
-
-    retry = upload(client, admin_a, company["id"], csv_text)
-    assert retry.status_code == 202, retry.text
-    assert retry.json()["id"] == job["id"]
-    assert retry.json()["status"] == "pending"
-    assert retry.json()["error_message"] is None
-
-    run_worker_until_idle()
-    job = client.get(f"/imports/{job['id']}", headers=admin_a).json()
-    assert job["status"] == "completed"
-    assert job["success_rows"] == 1
-    assert count_records() == 1

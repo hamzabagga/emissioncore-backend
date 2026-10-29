@@ -2,7 +2,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 Source = Literal["electricity", "fuel", "travel", "other"]
 
@@ -24,15 +24,7 @@ class FactorCreate(BaseModel):
 class FactorUpdate(BaseModel):
     kg_co2e_per_unit: Decimal | None = Field(default=None, ge=0, max_digits=18, decimal_places=6)
     valid_from: date | None = None
-    valid_to: date | None = None  # null explicite autorisé : facteur sans date de fin
-
-    @field_validator("kg_co2e_per_unit", "valid_from")
-    @classmethod
-    def reject_explicit_null(cls, value):
-        # Champ absent = inchangé ; null explicite = 422 (colonnes NOT NULL)
-        if value is None:
-            raise ValueError("cannot be null")
-        return value
+    valid_to: date | None = None
 
 
 class FactorOut(BaseModel):

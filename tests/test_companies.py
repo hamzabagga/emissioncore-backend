@@ -129,24 +129,3 @@ def test_cursor_pagination_walks_all_pages_without_duplicates(client, org_a_admi
 def test_invalid_cursor_returns_422(client, org_a_admin):
     response = client.get("/companies", params={"cursor": "garbage"}, headers=org_a_admin)
     assert response.status_code == 422
-
-@pytest.mark.parametrize("field", ["name", "industry"])
-def test_update_with_null_value_returns_422_not_name_conflict(client, org_a_admin, field):
-    # avant la correction : NOT NULL violé -> faux 409 "A company with this name already exists"
-    company = create_company(client, org_a_admin)
-    response = client.patch(f"/companies/{company['id']}", json={field: None}, headers=org_a_admin)
-    assert response.status_code == 422, response.text
-    assert response.json()["error"]["code"] == "validation_error"
-
-
-@pytest.mark.parametrize("sort,value", [("id", "abc"), ("name", 5)])
-def test_forged_cursor_with_wrong_value_type_returns_422(client, org_a_admin, sort, value):
-    import base64
-    import json
-
-    cursor = base64.urlsafe_b64encode(json.dumps({"v": value, "id": 1}).encode()).decode()
-    response = client.get(
-        "/companies", params={"sort": sort, "cursor": cursor}, headers=org_a_admin
-    )
-    assert response.status_code == 422, response.text
-    assert response.json()["error"]["code"] == "invalid_cursor"

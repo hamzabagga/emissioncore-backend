@@ -2,7 +2,6 @@ from fastapi import FastAPI, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from sqlalchemy.exc import DataError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 
@@ -48,16 +47,6 @@ def register_error_handlers(app: FastAPI) -> None:
         return JSONResponse(
             status_code=422,
             content=_body("validation_error", "Invalid request data", jsonable_encoder(exc.errors())),
-        )
-
-    @app.exception_handler(DataError)
-    async def handle_data_error(request: Request, exc: DataError):
-        # Classe SQLSTATE 22 : valeur refusée par PostgreSQL (id hors des limites d'un
-        # integer, caractère NUL dans un texte, nombre trop grand...). Elle vient toujours
-        # d'une donnée envoyée par le client -> 422 et non 500. Le détail SQL n'est pas renvoyé.
-        return JSONResponse(
-            status_code=422,
-            content=_body("invalid_value", "A value in the request is out of range or invalid"),
         )
 
     @app.exception_handler(StarletteHTTPException)

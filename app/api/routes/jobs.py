@@ -5,7 +5,6 @@ from app.api.deps import AdminUser, DbSession, ReadUser
 from app.core.errors import not_found
 from app.models import Job
 from app.schemas.job import JobOut
-from app.services.recalculation import enqueue_recalculation
 
 router = APIRouter(tags=["jobs"])
 
@@ -13,9 +12,9 @@ router = APIRouter(tags=["jobs"])
 @router.post("/emission-factors/recalculate", response_model=JobOut, status_code=202)
 def recalculate_records(admin: AdminUser, db: DbSession):
     """Recalcule en tâche de fond les records de l'organisation avec les facteurs
-    actuels. Déjà lancé automatiquement après chaque création ou modification de
-    facteur ; renvoie le job en attente s'il y en a un. Idempotent."""
-    job = enqueue_recalculation(db, admin.organization_id, admin.id)
+    actuels. À appeler après l'ajout ou la correction d'un facteur. Idempotent."""
+    job = Job(organization_id=admin.organization_id, created_by=admin.id, type="recalculation")
+    db.add(job)
     db.commit()
     db.refresh(job)
     return job

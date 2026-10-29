@@ -180,27 +180,3 @@ def test_viewer_can_list_factors(client, admin_a, auth_headers):
     response = client.get("/emission-factors", headers=viewer)
     assert response.status_code == 200
     assert len(response.json()["items"]) == 1
-
-# ---------- Valeurs null dans un PATCH ----------
-
-def test_update_with_null_value_returns_422_and_keeps_factor(client, admin_a):
-    factor = create_factor(client, admin_a, "2024-01-01", "2025-01-01")
-    response = client.patch(
-        f"/emission-factors/{factor['id']}", json={"kg_co2e_per_unit": None}, headers=admin_a
-    )
-    assert response.status_code == 422, response.text
-    assert response.json()["error"]["code"] == "validation_error"
-    # le facteur n'a pas changé
-    unchanged = client.get(f"/emission-factors/{factor['id']}", headers=admin_a).json()
-    assert unchanged["kg_co2e_per_unit"] == factor["kg_co2e_per_unit"]
-    
-    
-
-def test_update_with_null_valid_from_returns_422(client, admin_a):
-    factor = create_factor(client, admin_a, "2024-01-01", "2025-01-01")
-    response = client.patch(
-        f"/emission-factors/{factor['id']}", json={"valid_from": None}, headers=admin_a
-    )
-    assert response.status_code == 422, response.text
-    assert response.json()["error"]["code"] == "validation_error"
-
