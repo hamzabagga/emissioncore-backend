@@ -12,6 +12,8 @@ from sqlalchemy.orm import Session
 
 from app.core.errors import AppError
 from app.models import EmissionFactor, EmissionRecord, Job
+from app.services.recalculation import enqueue_recalculation
+from app.services.records import MAX_KG
 
 MAX_ROWS = 100_000
 BATCH_SIZE = 5_000
@@ -19,6 +21,9 @@ MAX_REPORTED_ERRORS = 1_000  # le rapport reste lisible même si tout le fichier
 REQUIRED_COLUMNS = ("source", "unit", "activity_amount", "date")
 SOURCES = {"electricity", "fuel", "travel", "other"}
 KG_PRECISION = Decimal("0.000001")
+# Limites des colonnes Numeric(18, 6) et Numeric(20, 6) : au-delà, Postgres
+# refuse l'INSERT et c'est tout le lot (donc le job) qui échoue.
+MAX_AMOUNT = Decimal("1e12")
 
 
 # ---------------------------------------------------------------- côté API
@@ -28,12 +33,16 @@ def create_import_job(
 ) -> tuple[Job, bool]:
     """Crée le job, ou renvoie le job existant si ce fichier a déjà été envoyé.
 
-    Retourne (job, created). Idempotent : même fichier + même company = même job.
+    Retourne (job, queued). Idempotent : même fichier + même company = même job.
+    Exception : un job en échec est remis en attente (sinon le fichier ne pourrait
+    plus jamais être importé). Sans doublons : les lignes déjà insérées sont ignorées.
     """
     try:
         header, row_count = _inspect_csv(content)
     except UnicodeDecodeError:
         raise AppError(422, "invalid_csv", "File must be UTF-8 encoded") from None
+    except csv.Error as exc:  # ex. champ plus grand que la limite du module csv
+        raise AppError(422, "invalid_csv", f"Malformed CSV: {exc}") from None
     missing = [c for c in REQUIRED_COLUMNS if c not in header]
     if missing:
         raise AppError(
@@ -47,6 +56,8 @@ def create_import_job(
     sha256 = hashlib.sha256(content).hexdigest()
     existing = _find_job_for_file(db, company_id, sha256)
     if existing:
+        if existing.status == "failed":
+            return _requeue_failed_job(db, existing, content), True
         return existing, False
 
     job = Job(
@@ -70,6 +81,21 @@ def create_import_job(
     return job, True
 
 
+def _requeue_failed_job(db: Session, job: Job, content: bytes) -> Job:
+    # Conditionnel sur status = 'failed' : sûr même si deux uploads arrivent en même temps
+    db.execute(
+        update(Job)
+        .where(Job.id == job.id, Job.status == "failed")
+        .values(
+            status="pending", file_content=content, processed_rows=0, success_rows=0,
+            error_rows=0, errors=[], error_message=None, started_at=None, finished_at=None,
+        )
+    )
+    db.commit()
+    db.refresh(job)
+    return job
+
+
 def _find_job_for_file(db: Session, company_id: int, sha256: str) -> Job | None:
     return db.scalar(
         select(Job).where(Job.company_id == company_id, Job.file_sha256 == sha256)
@@ -85,6 +111,16 @@ def _inspect_csv(content: bytes) -> tuple[list[str], int]:
 
 # ------------------------------------------------------------- côté worker
 
+_FINGERPRINT_COLUMNS = (
+    EmissionFactor.id, EmissionFactor.kg_co2e_per_unit,
+    EmissionFactor.valid_from, EmissionFactor.valid_to,
+)
+
+
+def _factor_fingerprint(factors) -> frozenset:
+    return frozenset((f.id, f.kg_co2e_per_unit, f.valid_from, f.valid_to) for f in factors)
+
+
 class _FactorLookup:
     """Facteurs de l'organisation chargés UNE fois en mémoire (quelques dizaines),
     au lieu d'une requête SQL par ligne du CSV."""
@@ -96,6 +132,9 @@ class _FactorLookup:
         )
         for f in factors:
             self._by_key.setdefault((f.source, f.unit), []).append(f)
+        self.fingerprint = _factor_fingerprint(
+            f for group in self._by_key.values() for f in group
+        )
 
     def find(self, source: str, unit: str, on_date: date) -> EmissionFactor | None:
         for f in self._by_key.get((source, unit), []):
@@ -121,6 +160,12 @@ def _parse_row(row: dict, factors: _FactorLookup) -> tuple[dict | None, str | No
         return None, f"invalid activity_amount '{raw_amount}'"
     if not amount.is_finite() or amount < 0:
         return None, "activity_amount must be a number >= 0"
+    if amount >= MAX_AMOUNT:
+        return None, f"activity_amount must be < {MAX_AMOUNT:f}"
+    # arrondi à 6 décimales comme Postgres (sûr ici : amount < 1e12)
+    amount = amount.quantize(KG_PRECISION, rounding=ROUND_HALF_UP)
+    if amount >= MAX_AMOUNT:  # ex. 999999999999.9999999 arrondi -> 1e12
+        return None, f"activity_amount must be < {MAX_AMOUNT:f}"
     try:
         on_date = date.fromisoformat(raw_date)
     except ValueError:
@@ -130,7 +175,12 @@ def _parse_row(row: dict, factors: _FactorLookup) -> tuple[dict | None, str | No
     if factor is None:
         return None, f"no emission factor valid on {on_date} for {source}/{unit}"
 
-    kg = (amount * factor.kg_co2e_per_unit).quantize(KG_PRECISION, rounding=ROUND_HALF_UP)
+    kg = amount * factor.kg_co2e_per_unit
+    if kg >= MAX_KG:  # vérifié avant quantize, qui lèverait InvalidOperation
+        return None, "computed kg_co2e is too large"
+    kg = kg.quantize(KG_PRECISION, rounding=ROUND_HALF_UP)
+    if kg >= MAX_KG:  # l'arrondi peut atteindre la limite
+        return None, "computed kg_co2e is too large"
     return {
         "source": source,
         "unit": unit,
@@ -174,7 +224,8 @@ def process_import_job(db: Session, job: Job) -> None:
         if error:
             error_count += 1
             if len(errors) < MAX_REPORTED_ERRORS:
-                errors.append({"row": line_number, "error": error})
+                # le message reprend la valeur brute : PostgreSQL refuse \u0000 en JSONB
+                errors.append({"row": line_number, "error": error.replace("\x00", "")})
             continue
         batch.append(
             {
@@ -188,6 +239,16 @@ def process_import_job(db: Session, job: Job) -> None:
         if len(batch) >= BATCH_SIZE:
             flush()
     flush()
+
+    # Facteurs modifiés pendant l'import : les lignes insérées ensuite ont pu être calculées
+    # avec l'ancienne valeur (après le passage du recalcul automatique) -> nouveau recalcul
+    # colonnes et non objets : la session renverrait ses objets en cache (anciennes valeurs)
+    current = db.execute(
+        select(*_FINGERPRINT_COLUMNS)
+        .where(EmissionFactor.organization_id == job.organization_id)
+    )
+    if _factor_fingerprint(current) != factors.fingerprint:
+        enqueue_recalculation(db, job.organization_id, job.created_by)
 
     job.success_rows = processed - error_count
     job.errors = errors

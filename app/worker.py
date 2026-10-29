@@ -55,12 +55,16 @@ def run_once(db: Session) -> bool:
     job = claim_next_job(db)
     if job is None:
         return False
-    logger.info("processing job %s (%s)", job.id, job.type)
+    # Lu AVANT le traitement : après un échec de flush, l'objet job est expiré et
+    # job.id lèverait PendingRollbackError -> le job resterait "processing" pour toujours
+    job_id = job.id
+    logger.info("processing job %s (%s)", job_id, job.type)
     try:
         HANDLERS[job.type](db, job)
-    except Exception as exc:  # un job en erreur ne doit pas arrêter le worker
-        logger.exception("job %s failed", job.id)
-        mark_job_failed(db, job.id, str(exc))
+    except Exception:  # un job en erreur ne doit pas arrêter le worker
+        # Le détail (SQL, valeurs) va dans les logs, jamais dans la réponse de l'API
+        logger.exception("job %s failed", job_id)
+        mark_job_failed(db, job_id, "Internal error while processing the job")
     return True
 
 

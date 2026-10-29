@@ -21,12 +21,12 @@ def import_records(
     response: Response,
     file: UploadFile = File(...),
 ):
-    get_company_or_404(db, company_id, user.organization_id)
+    get_company_or_404(db, company_id, user.organization_id, lock="share")
     content = file.file.read(MAX_FILE_BYTES + 1)
     if len(content) > MAX_FILE_BYTES:
         raise AppError(413, "file_too_large", "File is larger than 20 MB")
-    job, created = create_import_job(db, user.organization_id, company_id, user.id, content)
-    if not created:
+    job, queued = create_import_job(db, user.organization_id, company_id, user.id, content)
+    if not queued:
         response.status_code = 200  # même fichier déjà envoyé : on renvoie le job existant
     return job
 

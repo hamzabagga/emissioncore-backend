@@ -5,13 +5,20 @@ from app.core.errors import not_found
 from app.models import Company, EmissionFactor, EmissionRecord
 
 
-def get_company_or_404(db: Session, company_id: int, organization_id: int) -> Company:
+def get_company_or_404(
+    db: Session, company_id: int, organization_id: int, lock: str | None = None
+) -> Company:
+    """lock="share" : la company ne peut pas être supprimée avant notre commit (on va lui
+    rattacher un record ou un job). lock="update" : pour la supprimer."""
     # Le filtre organization_id rend l'objet INVISIBLE pour les autres organisations
-    company = db.scalar(
-        select(Company).where(
-            Company.id == company_id, Company.organization_id == organization_id
-        )
+    stmt = select(Company).where(
+        Company.id == company_id, Company.organization_id == organization_id
     )
+    if lock == "share":
+        stmt = stmt.with_for_update(read=True, key_share=True)
+    elif lock == "update":
+        stmt = stmt.with_for_update()
+    company = db.scalar(stmt)
     if company is None:
         raise not_found("Company")
     return company

@@ -71,7 +71,7 @@ docker compose up -d db
 python -m pytest -q
 ```
 
-**115 tests.** They run against a real PostgreSQL database (`emission_test`, created automatically)
+**165 tests.** They run against a real PostgreSQL database (`emission_test`, created automatically)
 on which the **real Alembic migrations** are applied, so database constraints (exclusion constraint,
 composite foreign keys, unique constraints) are tested too — not a mocked or `create_all` schema.
 Tables are truncated before each test, so tests are independent.
@@ -111,6 +111,7 @@ Routes only handle HTTP (validation, status codes); the rules live in `services/
 | **User and role re-read from the database on every request** (the JWT only holds the user id) | A role change or account deletion takes effect immediately, not after token expiry | One primary-key lookup per request |
 | **Short access token (15 min) + refresh token (7 days)**, token `type` checked | A refresh token cannot be used as an access token and vice versa | No server-side token revocation list (see "What's missing") |
 | **Uniform error format** `{"error": {"code", "message", "details"}}` for 401/403/404/409/422 | Predictable for API clients | — |
+| **Out-of-range values never cause a 500**: a PostgreSQL data error (id above the `integer` range, NUL character, number too large) becomes `422 invalid_value`, without leaking SQL details | Invalid input is the client's error, not the server's | — |
 
 ---
 
@@ -264,14 +265,19 @@ GET /imports/{job_id}   → status, progress, per-row errors [{"row": 7, "error"
   2. Each imported record keeps `(import_job_id, import_row)`, which is unique; inserts use
      `ON CONFLICT DO NOTHING`. If the worker dies mid-import, the job is picked up again after
      10 minutes and re-processed **without duplicates**.
+- **A failed import can be retried**: uploading the same file again puts the failed job back to
+  `pending` (`202`); rows already inserted are skipped, so the retry creates no duplicates.
 
 ### Recalculation
 
-`POST /emission-factors/recalculate` (admin) creates a background job. The worker runs **one
+Creating or changing an emission factor **automatically schedules a recalculation job** in the
+same transaction (a no-op update schedules nothing). If a recalculation job is already pending for
+the organization it is reused, so several factor edits in a row lead to a single run.
+`POST /emission-factors/recalculate` (admin) can also trigger it by hand. The worker runs **one
 `UPDATE … FROM` statement** that re-attaches every record of the organization to the factor valid
 on its date and recomputes kg CO2e. It only updates rows whose factor or amount actually changes,
-so it is **idempotent**: a second run updates 0 rows. Records that no longer have any valid factor
-are left unchanged and reported in the job.
+so it is **idempotent**: a second run updates 0 rows. Records that no longer have any valid factor,
+or whose kg CO2e would be too large to store, are left unchanged and reported in the job.
 
 ---
 
@@ -296,6 +302,8 @@ Every create / update / delete of an **emission record** or **emission factor** 
 (`user_id`), what (`changes`) and when (`created_at`). Updates store only the changed fields as
 `{"field": {"old": …, "new": …}}`. The audit entry is written **in the same transaction** as the
 change: a rejected change (e.g. `409`) leaves no trace, and no change can happen without a trace.
+Deleting a company also deletes its records (`ON DELETE CASCADE`): one `delete` audit entry is
+written for each of those records, in the same transaction.
 Queryable by admins with `GET /audit?entity=&entity_id=` (newest first, paginated, isolated per
 organization).
 

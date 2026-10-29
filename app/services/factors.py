@@ -55,4 +55,7 @@ def find_valid_factor(
             EmissionFactor.valid_from <= on_date,
             (EmissionFactor.valid_to.is_(None)) | (EmissionFactor.valid_to > on_date),
         )
+        # FOR SHARE : le facteur ne peut pas être supprimé ni modifié avant le commit du
+        # record qui l'utilise (sinon violation de clé étrangère -> 500, ou valeur périmée)
+        .with_for_update(read=True)
     )

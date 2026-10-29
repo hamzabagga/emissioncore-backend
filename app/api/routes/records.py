@@ -54,7 +54,7 @@ def list_records(
 @router.post("", response_model=RecordOut, status_code=201)
 def create_record(body: RecordCreate, user: WriteUser, db: DbSession):
     # 404 si la company n'appartient pas à l'organisation de l'utilisateur
-    get_company_or_404(db, body.company_id, user.organization_id)
+    get_company_or_404(db, body.company_id, user.organization_id, lock="share")
     factor, kg_co2e = calculate_emissions(
         db, user.organization_id, body.source, body.unit, body.activity_amount, body.date
     )
@@ -82,7 +82,7 @@ def get_record(record_id: int, user: ReadUser, db: DbSession):
 def update_record(record_id: int, body: RecordUpdate, user: WriteUser, db: DbSession):
     record = get_record_or_404(db, record_id, user.organization_id)
     before = snapshot(record, RECORD_FIELDS)
-    for field, value in body.model_dump(exclude_unset=True, exclude_none=True).items():
+    for field, value in body.model_dump(exclude_unset=True).items():
         setattr(record, field, value)
     # Toute modification peut changer le facteur applicable -> on recalcule toujours
     factor, kg_co2e = calculate_emissions(
